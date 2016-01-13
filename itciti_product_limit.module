@@ -60,11 +60,12 @@ function itciti_product_limit_form_alter(&$form, &$form_state, $form_id){
 function itciti_product_limit_add_to_cart_validate($form, &$form_state) {
     $qty = intval($form_state['input']['quantity']);
     $product_id = intval($form_state['input']['product_id']);
-    if (!itciti_product_limit_ordered_qty($product_id, $qty)) {
+    $qty_max = 0;
+    if (!itciti_product_limit_ordered_qty($product_id, $qty,$qty_max)) {
         $product = commerce_product_load($product_id);
         form_set_error("edit-quantity", t(
                 'Could not add product "%title": maximum quantity that can be purchased is %max',
-                array('%title' => $product->title, '%max' => $product->itciti_product_limit_max['und'][0]['value']))
+                array('%title' => $product->title, '%max' =>$qty_max))
         );
     }
 }
@@ -79,11 +80,12 @@ function itciti_product_limit_orderlist_add_to_cart_validate($form, &$form_state
     foreach($form_state['input']['qty'] as $product) {
         foreach($product as $product_id => $qty) {
             $pid = intval($product_id);
-            if ($qty > 0 && !itciti_product_limit_ordered_qty($pid,intval($qty))) {
+            $qty_max = 0;
+            if ($qty > 0 && !itciti_product_limit_ordered_qty($pid,intval($qty),$qty_max)) {
                 $product = commerce_product_load($pid);
                 form_set_error("edit-quantity", t(
                         'Could not add product "%title": maximum quantity that can be purchased is %max',
-                        array('%title' => $product->title, '%max' => $product->itciti_product_limit_max['und'][0]['value']))
+                        array('%title' => $product->title, '%max' => $qty_max))
                 );
             }
         }
@@ -96,12 +98,12 @@ function itciti_product_limit_orderlist_add_to_cart_validate($form, &$form_state
 function itciti_product_limit_option_validate($element, &$form_state) {
     $product_id = intval($form_state['values']['product_id']);
     $qty = intval($form_state['values']['quantity']);
-
-    if (!itciti_product_limit_ordered_qty($product_id, $qty)) {
+    $qty_max = 0;
+    if (!itciti_product_limit_ordered_qty($product_id, $qty,$qty_max)) {
         $product = commerce_product_load($product_id);
         form_set_error("quantity",t(
                 'Could not add product "%title": maximum quantity that can be purchased is %max',
-                array('%title' => $product->title, '%max' => $product->itciti_product_limit_max['und'][0]['value']))
+                array('%title' => $product->title, '%max' => $qty_max))
         );
     }
 }
@@ -122,8 +124,9 @@ function itciti_product_limit_commerce_cart_validation($form, &$form_state){
             if (in_array($line_item_wrapper->getBundle(), commerce_product_line_item_types())) {
                 $product_id = $line_item_wrapper->commerce_product->product_id->value();
                 $product = commerce_product_load($product_id);
-                if(count($product->itciti_product_limit_max) > 0){ //check if product limit max field has set
-                    $qty_max = intval($product->itciti_product_limit_max['und'][0]['value']);
+                global $user;
+                $qty_max = 0;
+                if(_get_max_quantity_base_one_role($user,$product,$qty_max)){
 
                     if($qty_max >0 && $qty > $qty_max){
                         form_set_error("edit_quantity][$index",t(
@@ -132,7 +135,6 @@ function itciti_product_limit_commerce_cart_validation($form, &$form_state){
                         );
                     }
                 }
-
             }
         }
     }
@@ -168,11 +170,12 @@ function itciti_product_limit_form_commerce_cart_validate($form, &$form_state) {
         $line_item = $form_state['line_items'][$line_item_index[$index]];
         $line_item_wrapper = entity_metadata_wrapper('commerce_line_item', $line_item);
         $product_id = $line_item_wrapper->commerce_product->product_id->value();
-        if (!itciti_product_limit_ordered_qty($product_id, $qty,$index,$deleted)) {
+        $qty_max = 0;
+        if (!itciti_product_limit_ordered_qty($product_id, $qty,$qty_max,$index,$deleted)) {
             $product = commerce_product_load($product_id);
             form_set_error("edit_quantity][$index",t(
                     'Maximum quantity of %title that can be purchased is %max',
-                    array('%title' => $product->title, '%max' => $product->itciti_product_limit_max['und'][0]['value']))
+                    array('%title' => $product->title, '%max' => $qty_max))
             );
             $error++;
         }
@@ -205,15 +208,15 @@ function itciti_product_limit_form_commerce_cart_validate($form, &$form_state) {
  *   TRUE iff the ordered quantity is allowed
  *   FALSE otherwise.
  */
-function itciti_product_limit_ordered_qty($product_id ,$quantity,$index = -1,$deleted = array()) {
+function itciti_product_limit_ordered_qty($product_id ,$quantity,&$qty_max,$index = -1,$deleted = array()) {
     global $user;
     $product = commerce_product_load($product_id);
     if(!$product->itciti_product_limit_max ||
         in_array($index,$deleted))
         return true;
 
-    $qty_max = intval($product->itciti_product_limit_max['und'][0]['value']);
-    if($qty_max > 0){
+
+    if(_get_max_quantity_base_one_role($user,$product,$qty_max)){
         // Get line items from cart
         $order = commerce_cart_order_load($user->uid);
 
@@ -233,11 +236,13 @@ function itciti_product_limit_ordered_qty($product_id ,$quantity,$index = -1,$de
     }
     return true;
 }
+
 /**
  * Ensures a maximum order quantity field is present on a product type bundle.
  */
 function itciti_product_limit_configure_product_type($type) {
     itciti_product_limit_create_instance('itciti_product_limit_max', 'number_integer', FALSE, 'commerce_product', $type, t('Maximum order quantity'));
+    itciti_product_limit_create_instance('itciti_product_limit_wholesaler', 'number_integer', FALSE, 'commerce_product', $type, t('Maximum order quantity for wholesaler'));
 }
 
 /**
@@ -315,4 +320,30 @@ function itciti_product_limit_create_instance($field_name, $field_type, $require
  */
 function itciti_product_limit_commerce_product_type_insert($type) {
     itciti_product_limit_configure_product_type($type['type']);
+}
+
+/**
+ * Get maximum order quantity depends on user role
+ *
+ * @param $user
+ *        current user
+ * @param $product
+ *        commerce product object
+ */
+function _get_max_quantity_base_one_role($user, $product, &$qty_max){
+     $hasMax = false;
+
+    if (count($product->itciti_product_limit_max) > 0){
+        $qty_max = intval($product->itciti_product_limit_max['und'][0]['value']);
+        $hasMax = true;
+    }
+
+    if(in_array('wholesaler',$user->roles)){
+        if (count($product->itciti_product_limit_wholesaler) > 0) {
+            $qty_max = intval($product->itciti_product_limit_wholesaler['und'][0]['value']);
+            $hasMax = true;
+        }
+    }
+
+    return $hasMax;
 }

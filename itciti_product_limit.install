@@ -36,5 +36,9 @@ function itciti_product_limit_uninstall() {
         if($instance = field_info_instance('commerce_product', 'itciti_product_limit_max', $type)) {
             field_delete_instance($instance);
         }
+
+        if($instance = field_info_instance('commerce_product', 'itciti_product_limit_wholesaler', $type)) {
+            field_delete_instance($instance);
+        }
     }
 }
