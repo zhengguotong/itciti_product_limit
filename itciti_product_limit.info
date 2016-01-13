@@ -1,0 +1,7 @@
+name = Itciti Product limit
+description = Maintain a maximum order quantity for products
+package = ITciti
+dependencies[] = number
+dependencies[] = commerce_product
+dependencies[] = commerce_order
+core = 7.x

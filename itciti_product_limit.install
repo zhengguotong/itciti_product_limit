@@ -1,0 +1,40 @@
+<?php
+
+/**
+ * @file
+ * Install, update and uninstall functions for the itciti_product_limit module.
+ */
+
+/**<?php
+
+/**
+ * @file
+ * Install, update and uninstall functions for the itciti_product_limit module.
+ */
+
+/**
+ * Implement hook_enable()
+ * Adds the max_quantity field to all product types if not yet available
+ */
+function itciti_product_limit_enable() {
+    $types = commerce_product_types();
+
+    foreach($types AS $name => $type) {
+        itciti_product_limit_configure_product_type($name);
+    }
+}
+
+/**
+ * Implement hook_uninstall()
+ * Removes the max_quantity field and all data associated upon uninstall.
+ */
+function itciti_product_limit_uninstall() {
+    $types = commerce_product_types();
+
+    foreach($types AS $name => $type) {
+
+        if($instance = field_info_instance('commerce_product', 'itciti_product_limit_max', $type)) {
+            field_delete_instance($instance);
+        }
+    }
+}

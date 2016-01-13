@@ -1,0 +1,318 @@
+<?php
+
+/**
+ * @file
+ * @author Itciti-Tony Zheng
+ * @since 23/01/2016
+ *
+ * Allow commerce products to have a maximum order quantity
+ */
+
+/**
+ * Implements hook_form_alter().
+ *
+ * Alters the add-to-cart form to add a validator.
+ */
+function itciti_product_limit_form_alter(&$form, &$form_state, $form_id){
+    $commerce_cart_form = 'commerce_cart_form';
+    if (module_exists('commerce_cart_view_override')) {
+        $commerce_cart_form = variable_get('commerce_cart_view_override_page_view', 'commerce_cart_form');
+    }
+
+    if (strpos($form_id, "commerce_cart_add_to_cart_form") === 0) {
+        // Check to see if product has options (multiple products using
+        // the default dropdown)
+        if(isset($form['product_id']['#options']) ){
+            $form['product_id']['#element_validate'][] = 'itciti_product_limit_option_validate';
+        }
+        // A single product or uses attributes (like colour & size).
+        else {
+            // Add validation to the add to cart
+            $form['#validate'][] = 'itciti_product_limit_add_to_cart_validate';
+        }
+    } elseif($form_id == 'commerce_cart_orderlist_add_to_cart') {
+        $form['#validate'][] = 'itciti_product_limit_orderlist_add_to_cart_validate';
+    } elseif (strpos($form_id, "views_form_{$commerce_cart_form}_") === 0) {
+        $view = reset($form_state['build_info']['args']);
+
+        // Only alter buttons if the cart form View shows line items.
+        if (!empty($view->result)) {
+            // Add validate function to the cart form.
+            if (empty($form['actions']['submit']['#validate'])) {
+                $form['actions']['submit']['#validate'] = array_merge($form['#validate'], array('itciti_product_limit_commerce_cart_validation'));
+            }
+            else {
+                $form['actions']['submit']['#validate'][] = 'itciti_product_limit_commerce_cart_validation';
+            }
+            if (empty($form['actions']['checkout']['#validate'])) {
+                $form['actions']['checkout']['#validate'] = array_merge($form['#validate'], array('itciti_product_limit_commerce_cart_validation'));
+            }
+            else {
+                $form['actions']['checkout']['#validate'][] = 'itciti_product_limit_commerce_cart_validation';
+            }
+        }
+    }
+}
+
+/**
+ * Form validate handler: validate "add to cart" form with one entry.
+ */
+function itciti_product_limit_add_to_cart_validate($form, &$form_state) {
+    $qty = intval($form_state['input']['quantity']);
+    $product_id = intval($form_state['input']['product_id']);
+    if (!itciti_product_limit_ordered_qty($product_id, $qty)) {
+        $product = commerce_product_load($product_id);
+        form_set_error("edit-quantity", t(
+                'Could not add product "%title": maximum quantity that can be purchased is %max',
+                array('%title' => $product->title, '%max' => $product->itciti_product_limit_max['und'][0]['value']))
+        );
+    }
+}
+
+/**
+ * Form validate handler: validate (unofficial) orderlist form.
+ */
+function itciti_product_limit_orderlist_add_to_cart_validate($form, &$form_state) {
+    $items = $form_state['input']['qty'];
+    $pid;
+
+    foreach($form_state['input']['qty'] as $product) {
+        foreach($product as $product_id => $qty) {
+            $pid = intval($product_id);
+            if ($qty > 0 && !itciti_product_limit_ordered_qty($pid,intval($qty))) {
+                $product = commerce_product_load($pid);
+                form_set_error("edit-quantity", t(
+                        'Could not add product "%title": maximum quantity that can be purchased is %max',
+                        array('%title' => $product->title, '%max' => $product->itciti_product_limit_max['und'][0]['value']))
+                );
+            }
+        }
+    }
+}
+
+/**
+ * Form validate handler: validate "add to cart" form with multiple entries.
+ */
+function itciti_product_limit_option_validate($element, &$form_state) {
+    $product_id = intval($form_state['values']['product_id']);
+    $qty = intval($form_state['values']['quantity']);
+
+    if (!itciti_product_limit_ordered_qty($product_id, $qty)) {
+        $product = commerce_product_load($product_id);
+        form_set_error("quantity",t(
+                'Could not add product "%title": maximum quantity that can be purchased is %max',
+                array('%title' => $product->title, '%max' => $product->itciti_product_limit_max['und'][0]['value']))
+        );
+    }
+}
+
+/**
+ * Form validation handler for views_form_commerce_cart_form_default().
+ *
+ * Checks each line item to make sure that they have not requested more items
+ * than maximum product quanlity.
+ */
+function itciti_product_limit_commerce_cart_validation($form, &$form_state){
+    $line_item_index = array_keys($form_state['line_items']);
+    if (isset($form_state['input']['edit_quantity'])) {
+
+        foreach ($form_state['values']['edit_quantity'] as $index => $qty) {
+            $line_item = $form_state['line_items'][$line_item_index[$index]];
+            $line_item_wrapper = entity_metadata_wrapper('commerce_line_item', $line_item);
+            if (in_array($line_item_wrapper->getBundle(), commerce_product_line_item_types())) {
+                $product_id = $line_item_wrapper->commerce_product->product_id->value();
+                $product = commerce_product_load($product_id);
+                if(count($product->itciti_product_limit_max) > 0){ //check if product limit max field has set
+                    $qty_max = intval($product->itciti_product_limit_max['und'][0]['value']);
+
+                    if($qty_max >0 && $qty > $qty_max){
+                        form_set_error("edit_quantity][$index",t(
+                                'Maximum quantity of %title that can be purchased is %max',
+                                array('%title' => $product->title, '%max' => $qty_max))
+                        );
+                    }
+                }
+
+            }
+        }
+    }
+}
+
+/**
+ * Implements hook_form_FORM_ID_alter().
+ *
+ * Alters the cart form to provide a validator for it.
+ */
+function itciti_product_limit_form_views_form_commerce_cart_form_default_alter(&$form, &$form_state) {
+    $form['#validate'][] = 'itciti_product_limit_form_commerce_cart_validate';
+}
+
+/**
+ * Form validator function for cart form.
+ *
+ * Checks each line item to make sure that they have not requested more items
+ * than allowed.
+ */
+function itciti_product_limit_form_commerce_cart_validate($form, &$form_state) {
+    $deleted = array();
+    $error = 0;
+    foreach (array_keys($form_state['input']['edit_quantity']) as $index) {
+        if(is_numeric($index) && array_key_exists('delete-line-item-'.intval($index),$form_state['values']))
+            $deleted[] = $index;
+    }
+
+    $line_item_index = array_keys($form_state['line_items']);
+    foreach ($form_state['input']['edit_quantity'] as $index => $quantity) {
+        $qty = intval($quantity);
+
+        $line_item = $form_state['line_items'][$line_item_index[$index]];
+        $line_item_wrapper = entity_metadata_wrapper('commerce_line_item', $line_item);
+        $product_id = $line_item_wrapper->commerce_product->product_id->value();
+        if (!itciti_product_limit_ordered_qty($product_id, $qty,$index,$deleted)) {
+            $product = commerce_product_load($product_id);
+            form_set_error("edit_quantity][$index",t(
+                    'Maximum quantity of %title that can be purchased is %max',
+                    array('%title' => $product->title, '%max' => $product->itciti_product_limit_max['und'][0]['value']))
+            );
+            $error++;
+        }
+    }
+
+    if($error > 0 && count($deleted) > 0) {
+        $err_mult = $error > 1 ? "s" : "";
+        $del_mult = count($deleted) > 1 ? " s have" : " has";
+        form_set_error("itciti_product_limit", t(
+                'Your selected item!del_mult not been deleted, please correct the previous error!err_mult first',
+                array('!err_mult' => $err_mult, '!del_mult' => $del_mult))
+        );
+    }
+}
+
+
+/**
+ * Check whether a purchase quantity exceeds what is available.
+ *
+ * @param $product_id
+ *   The numeric product ID
+ * @param $quantity
+ *   Quantity to be purchased.
+ * @param $index
+ *   the current line item, defaults to none
+ * @param $deleted
+ *    Array of deleted products for this action, empty unless processing commerce_cart_validate
+ *
+ * @return
+ *   TRUE iff the ordered quantity is allowed
+ *   FALSE otherwise.
+ */
+function itciti_product_limit_ordered_qty($product_id ,$quantity,$index = -1,$deleted = array()) {
+    global $user;
+    $product = commerce_product_load($product_id);
+    if(!$product->itciti_product_limit_max ||
+        in_array($index,$deleted))
+        return true;
+
+    $qty_max = intval($product->itciti_product_limit_max['und'][0]['value']);
+    if($qty_max > 0){
+        // Get line items from cart
+        $order = commerce_cart_order_load($user->uid);
+
+        if(is_object($order) && property_exists($order, 'commerce_line_items') &&
+            array_key_exists('und',$order->commerce_line_items)) {
+            foreach($order->commerce_line_items['und'] as $li_index => $line_item) {
+                // Skip own line item and deleted ones
+                if($index == $li_index || in_array($li_index,$deleted)) continue;
+                $line_item_wrapper = entity_metadata_wrapper('commerce_line_item', $line_item['line_item_id']);
+                $li_product_id = $line_item_wrapper->commerce_product->product_id->value();
+                if($li_product_id == $product_id) {
+                    $quantity += intval($line_item_wrapper->quantity->value());
+                }
+            }
+        }
+        return $quantity <= $qty_max;
+    }
+    return true;
+}
+/**
+ * Ensures a maximum order quantity field is present on a product type bundle.
+ */
+function itciti_product_limit_configure_product_type($type) {
+    itciti_product_limit_create_instance('itciti_product_limit_max', 'number_integer', FALSE, 'commerce_product', $type, t('Maximum order quantity'));
+}
+
+/**
+ * Creates a required, locked instance of a stock field on the specified bundle.
+ *
+ * @param $field_name
+ *   The name of the field; if it already exists, a new instance of the existing
+ *   field will be created. For fields governed by the Commerce modules, this
+ *   should begin with commerce_.
+ * @param $entity_type
+ *   The type of entity the field instance will be attached to.
+ * @param $bundle
+ *   The bundle name of the entity the field instance will be attached to.
+ * @param $label
+ *   The label of the field instance.
+ * @param $weight
+ *   The default weight of the field instance widget and display.
+ */
+function itciti_product_limit_create_instance($field_name, $field_type, $required, $entity_type, $bundle, $label, $description = NULL, $weight = 0) {
+    // Look for or add the specified stock field to the requested entity bundle.
+    $field = field_info_field($field_name);
+    $instance = field_info_instance($entity_type, $field_name, $bundle);
+
+    if (empty($field)) {
+        $field = array(
+            'field_name' => $field_name,
+            'type' => $field_type,
+            'cardinality' => 1,
+            'entity_types' => array($entity_type),
+            'translatable' => FALSE,
+            'locked' => TRUE,
+        );
+        if ($field_type == 'list_boolean') {
+            $field['settings'] = array(
+                'allowed_values' => array(0, 1),
+                'allowed_values_function' => '',
+            );
+        }
+        $field = field_create_field($field);
+    }
+
+    if (empty($instance)) {
+        $instance = array(
+            'field_name' => $field_name,
+            'entity_type' => $entity_type,
+            'bundle' => $bundle,
+            'label' => $label,
+            'required' => $required,
+            'settings' => array(),
+            'display' => array(),
+            'description' => $description,
+            'default_value' => array( 0 ),
+        );
+
+        if ($field_type == 'list_boolean') {
+            $instance['widget'] = array(
+                'type' => 'options_onoff',
+                'settings' => array(
+                    'display_label' => TRUE,
+                ),
+            );
+        }
+
+        $entity_info = entity_get_info($entity_type);
+
+        // Spoof the default view mode so its display type is set.
+        $entity_info['view modes']['default'] = array();
+
+        field_create_instance($instance);
+    }
+}
+
+/**
+ * Implement hook_commerce_product_type_insert()
+ */
+function itciti_product_limit_commerce_product_type_insert($type) {
+    itciti_product_limit_configure_product_type($type['type']);
+}
