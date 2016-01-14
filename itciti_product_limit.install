@@ -5,12 +5,6 @@
  * Install, update and uninstall functions for the itciti_product_limit module.
  */
 
-/**<?php
-
-/**
- * @file
- * Install, update and uninstall functions for the itciti_product_limit module.
- */
 
 /**
  * Implement hook_enable()
@@ -33,11 +27,11 @@ function itciti_product_limit_uninstall() {
 
     foreach($types AS $name => $type) {
 
-        if($instance = field_info_instance('commerce_product', 'itciti_product_limit_max', $type)) {
+        if($instance = field_info_instance('commerce_product', 'itciti_product_limit_max',  $name)) {
             field_delete_instance($instance);
         }
 
-        if($instance = field_info_instance('commerce_product', 'itciti_product_limit_wholesaler', $type)) {
+        if($instance = field_info_instance('commerce_product', 'itciti_product_limit_wholesaler',  $name)) {
             field_delete_instance($instance);
         }
     }
